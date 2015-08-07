@@ -1,0 +1,48 @@
+---
+title: "MADB harvesting"
+author: "Aleksandr Matrunich"
+date: "July 6, 2015"
+output: html_document
+---
+
+```{r simple_get}
+suppressPackageStartupMessages(library(dplyr))
+
+get_madb_export <- function(country, hs) {
+  url <- "http://madb.europa.eu/"
+  
+  # r <- html("http://madb.europa.eu/madb/atDutyOverviewPubli.htm?option=1&display=20&language=all&year1=&year2=&sector=all&country=all&langId=en&datacat_id=AT&showregimes=&countryid=US&submit=Search&countries=US&hscode=5515110045")
+  
+  r <- rvest::html(url,
+                   path ="madb/atDutyOverviewPubli.htm",
+                   query = list(option = 1,
+                                display = 50,
+                                language = "all",
+                                year1 = "",
+                                year2 = "",
+                                sector = "all",
+                                country = "all",
+                                langId = "en",
+                                datacat_id = "AT",
+                                showregimes = "",
+                                countryid = country,
+                                submit = "Search",
+                                countries = country,
+                                hscode= hs))
+  
+  
+  tbl <- rvest::html_nodes(r, xpath = "//table[1]") %>% 
+    rvest::html_table(fill = T, header = T) %>% 
+    as.data.frame(stringsAsFactors = F) %>% 
+    select(hs = 1, desc = 2) %>% 
+    mutate(dash = stringr::str_replace(
+      stringr::str_extract(desc, 
+                           "^.*?[A-Za-z]{1}"), 
+      "[A-Za-z]$", ""))
+  
+  tbl %>% select(-dash)
+}
+```
+
+
+

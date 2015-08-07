@@ -1,0 +1,425 @@
+---
+title: "How to speed up reading of data from SWS"
+author: "Alex Matrunich"
+date: "June 10, 2015"
+output: 
+  html_document:
+    toc: true
+
+---
+# Problem
+Reading of data from SWS is really slow. For example, getting of dataset with ~200K rows takes about one hour.
+
+
+```{r, eval=F}
+trade <- getReporterAgriData(c(getCountryCode("^Germa")$code, 
+                                 getCountryCode("Isra")$code, 
+                                 getCountryCode("^USA\\(")$code),
+                               selectElems(unit %in% c("kg", "US$", "l", "m3", 
+                                                       "t", "1000 t", "head", "1000 head"),
+                                           backflow == F), 
+                               2011)
+dim(trade)
+```
+
+```
+[1] 186493      7
+```
+# Investigation
+
+## Fresh update on investigation
+
+Implementing of Rcpp function for fast conversion of list to data.table hasn't bring any significant change, though C++ version is 1014 time faster than R version. Further discovering shows that Rprof and lineprof packages count time of CPU using, but not "physical" time. Current idea is that all waiting time goes to RCurl::getURL() function inside of faosws::PostRestCall(), when we wait for answer from SWS-server.
+
+So it's not possible to increase reading speed by optimizing code on client side.
+
+## Results of profiling 
+
+Profiling of upper chunk was done with [```lineprof``` R-package](https://github.com/hadley/lineprof).
+
+Bottleneck is in ```faosws::GetData.processNormalizedResult()```. During execution it has produced 
+49420687 duplicates, execution time was 3300 seconds. 90301 MB of memory was allocated, 89950 MB was released. Final size of the data set in memory was 10.5 MB. 
+
+```{r, eval=F}
+GetData.processNormalizedResult <- function(data, flags) {
+	keyNames <- sapply(data$keyDefinitions, function(x) x[1])
+	if(flags)
+	    flagNames <- sapply(data$flagDefinitions, function(x) x[1])
+	rows <- lapply(data$data, function(listElement){
+	    out <- data.table(Value = listElement$value)
+	    out[, c(keyNames) := as.list(listElement$keys)]
+    	if(flags){
+    	    out[, c(flagNames) := as.list(listElement$flags)]
+    	    ## Reorder columns
+    	    setcolorder(out, c(keyNames, "Value", flagNames))
+    	} else {
+    	    ## Reorder columns
+    	    setcolorder(out, c(keyNames, "Value"))
+    	}
+	})
+	do.call("rbind", rows)
+}
+
+
+
+```
+
+The problem comes from this lapply statement ```rows <- lapply(data$data, function(listElement){...})```
+
+## The environment
+
+Let's see at inputs of the function. Firstly I request a small dataset with just two values from SWS.
+
+```{r, eval = F}
+getComtradeData(reporter = getCountryCode("^Germa")$code,
+                partner  = getCountryCode("USA\\(")$code,
+                year     = 2011, 
+                item     = 100110,
+                element  = c(5621, 5600))
+```
+
+```{r, eval = F}
+GetData.processNormalizedResult <- function(data, flags) {...}
+```
+
+```data``` is a list which we got from parsing of json-stream from SWS on previous step. 
+
+Here is an example of such ```data``` list from the request above.
+
+
+```
+debug at /home/sas/sws/faosws/R/GetData.R#279: keyNames <- sapply(data$keyDefinitions, function(x) x[1])
+Browse[2]> data
+$keyDefinitions
+$keyDefinitions[[1]]
+                 code           description                  type 
+"reportingCountryM49"   "Reporting Country"              "normal" 
+
+$keyDefinitions[[2]]
+               code         description                type 
+"partnerCountryM49"   "Partner Country"            "normal" 
+
+$keyDefinitions[[3]]
+                  code            description                   type 
+"measuredElementTrade"              "Element"      "measurementUnit" 
+
+$keyDefinitions[[4]]
+            code      description             type 
+"measuredItemHS"           "Item"         "normal" 
+
+$keyDefinitions[[5]]
+            code      description             type 
+"timePointYears"           "Year"           "time" 
+
+
+$flagDefinitions
+$flagDefinitions[[1]]
+       code description 
+"flagTrade"      "Flag" 
+
+
+$data
+$data[[1]]
+$data[[1]]$keys
+[1] "276"    "842"    "5600"   "100110" "2011"  
+
+$data[[1]]$value
+[1] 45665078
+
+$data[[1]]$flags
+[1] ""
+
+
+$data[[2]]
+$data[[2]]$keys
+[1] "276"    "842"    "5621"   "100110" "2011"  
+
+$data[[2]]$value
+[1] 18297548
+
+$data[[2]]$flags
+[1] ""
+```
+
+
+
+```{r, eval = F}
+keyNames <- sapply(data$keyDefinitions, function(x) x[1])
+```
+Here we extract names from definitions of keys. It's not a priority, but it's not recommended to use ```sapply``` and ```lapply``` inside of functions, as these functions don't give assurance about output type. So it's better to use ```vapply``` here: it could be faster and type of output is stable.
+```
+Browse[2]> keyNames
+                  code                   code                   code 
+ "reportingCountryM49"    "partnerCountryM49" "measuredElementTrade" 
+                  code                   code 
+      "measuredItemHS"       "timePointYears" 
+```
+
+```{r, eval = F}
+if(flags)
+  flagNames <- sapply(data$flagDefinitions, function(x) x[1])
+```
+Variable ```flags``` by default is TRUE.
+```
+Browse[2]> data$flagDefinitions
+[[1]]
+       code description 
+"flagTrade"      "Flag" 
+Browse[2]> flagNames
+       code 
+"flagTrade"
+```
+
+Next is our problem ```lapply``` call.
+```{r, eval = F}
+rows <- lapply(data$data, function(listElement){
+  out <- data.table(Value = listElement$value)
+  out[, c(keyNames) := as.list(listElement$keys)]
+  if(flags){
+    out[, c(flagNames) := as.list(listElement$flags)]
+    ## Reorder columns
+    setcolorder(out, c(keyNames, "Value", flagNames))
+  } else {
+    ## Reorder columns
+    setcolorder(out, c(keyNames, "Value"))
+  }
+})
+```
+
+Input list data$data is following:
+
+```
+Browse[2]> data$data
+[[1]]
+[[1]]$keys
+[1] "276"    "842"    "5600"   "100110" "2011"  
+
+[[1]]$value
+[1] 45665078
+
+[[1]]$flags
+[1] ""
+
+
+[[2]]
+[[2]]$keys
+[1] "276"    "842"    "5621"   "100110" "2011"  
+
+[[2]]$value
+[1] 18297548
+
+[[2]]$flags
+[1] ""
+```
+So ```lapply``` applies anonymous function to every element of ```data$data``` list and returns list of results into variable ```rows```.
+
+## Source of evil
+
+```{r, eval=F}
+out <- data.table(Value = listElement$value)
+```
+Here we create data.table ```out``` with one row and one column. The single cell contains value.
+
+```{r, eval = F}
+out[, c(keyNames) := as.list(listElement$keys)]
+```
+We add to the data table columns with keys. R doesn't update existing data.table, but create a new one. Also ```as.list``` call looks suspicious. Do we need it here?
+
+```{r, eval = F}
+if(flags){
+  out[, c(flagNames) := as.list(listElement$flags)]
+  ## Reorder columns
+  setcolorder(out, c(keyNames, "Value", flagNames))
+}
+```
+We add one more column with flag (recreate data table one more time) and then reorder columns in the data.table.
+
+All these operations inside of ```lapply``` take nearly similar amounts of time to run.
+
+After lapply'ing we bind all one-row data.tables from ```rows``` list into one big data.table and return it:
+```{r, eval = F}
+do.call("rbind", rows)
+```
+
+#Recommendations
+## What should we do?
+
+* Conversion of JSON-data recieved from SWS to list (function ```faosws::PostRestCall()```) doesn't take too much time as it's done with C-backend [```RJSONIO::fromJSON()```](http://www.inside-r.org/packages/cran/RJSONIO/docs/fromJSON).
+* Maybe it's possible to modify call to ```fromJSON()``` and to get after conversion from JSON not list, but already data.frame. Also it's possible to find options in [jsonlite R-package](http://cran.r-project.org/web/packages/jsonlite/index.html), which could be more efficient and flexible. In this case we'll do conversion from JSON to table view in C/C++, but not in R. It's much more faster.
+* The easiest way is to optimize ```faosws::GetData.processNormalizedResult()``` function.
+    + We should define dimensions of resulting table before extraction data from list, because we already know its size. Else we are recreating it each time we add new set of cells to every raw.
+    + Some tricks could be done at R-level, but as this chunk of code (```lapply```) is run for every row of table this place it critical for speed. So best approach here is to run it as C++ level with Rcpp R-package.
+
+## Integration of C++ code in R with Rcpp package
+
+See "List and data frames" section in [Rcpp chapter](http://adv-r.had.co.nz/Rcpp.html) of Advanced R book by Hadley Wickham.
+
+
+# Implementation of Rcpp variant
+
+```
+#include <Rcpp.h>
+using namespace Rcpp;
+
+// [[Rcpp::export]]
+List GetDataprocessNormalizedResult_cpp(List data, bool flags) {
+  
+  
+  // ********** Data values 
+  // Create new list with content of data$data
+  List fullDataList = as<List>(data["data"]);
+  
+  // Length of dataList. Not sure: there is also length()
+  int nOfElems = fullDataList.size();
+  
+  // Vector for data values
+  DoubleVector valuesVector = DoubleVector(nOfElems);
+  
+  
+  // *************** Key definitions  
+  // Extract list with key defs
+  List keyDefinitionsList = as<List>(data["keyDefinitions"]);
+  
+  // length of keyDef
+  int nOfKeys = keyDefinitionsList.size();
+  
+  // Names of keys
+  CharacterVector keyCodes = CharacterVector(nOfKeys);
+  for (int i = 0; i < nOfKeys; i++) {
+    List keyDefinitionsEl = as<List>(keyDefinitionsList[i]);
+    keyCodes[i] = as<String>(keyDefinitionsEl["code"]);
+  }  
+  
+  // char matrix for keys
+  CharacterMatrix keysMatrix = CharacterMatrix(Dimension(nOfElems, nOfKeys));
+  
+  
+  // ********** Flags 
+  
+  
+  // Get values from data$flagDefinitions
+  List flagDefinitionsList = as<List>(data["flagDefinitions"]);
+  
+  // number of flags
+  int nOfFlags = flagDefinitionsList.size();
+  
+  // Create empty vector for names of flags
+  CharacterVector flagCodes = CharacterVector(nOfFlags);
+  
+  if(flags) {
+    // Fill vector with flags' names
+    for (int i = 0; i < nOfFlags; i++) {
+      List flagDefinitionsEl = as<List>(flagDefinitionsList[i]);
+      flagCodes[i] = as<String>(flagDefinitionsEl[0]);
+    }  
+  }
+  //Initialize empty vector for flags
+  CharacterVector flagVector = CharacterVector(nOfElems);
+  
+  
+  
+  // ********** Extract data 
+  // Run through data and fill all vectors
+  for (int i = 0; i < nOfElems ; i++) {
+    List oneDataElem = as<List>(fullDataList[i]);
+    keysMatrix(i, _) = as<CharacterVector>(oneDataElem["keys"]);
+    valuesVector[i] = as<double>(oneDataElem["value"]);
+    if(flags) {
+      flagVector[i] = as<String>(oneDataElem["flags"]);
+    }
+
+  }
+  
+  
+  // nColTotal
+  int nColTotal = 0;
+  if(flags) {
+    nColTotal = nOfKeys + 1 + nOfFlags; }
+  else {
+    nColTotal = nOfKeys + 1;
+  }
+  
+  // Convert char matrix to list 
+  // + 2 is place for value and flag
+  List outputList = List(nColTotal);
+  for (int i = 0; i < nOfKeys ; i++) {
+    outputList[i] = keysMatrix(_, i);
+  }
+  
+  // Add value and flag
+  outputList[nOfKeys] = valuesVector;
+  if(flags) outputList[nOfKeys + 1] = flagVector;
+//   
+
+  // Add colnames
+  CharacterVector outputNames = CharacterVector(nColTotal);
+  
+  outputNames[Range(0, nOfKeys -1)] = keyCodes;
+  outputNames[nOfKeys] = "Value";
+  if(flags) outputNames[Range(nOfKeys + 1, nColTotal - 1)] = flagCodes;
+  
+  outputList.attr("names") = outputNames;
+  // outputList.attr("class") = "data.frame";
+  
+  
+  return(outputList);
+  
+  
+  }
+
+
+/*** R
+
+dataList <- list(
+  keyDefinitions = list(c(code = "reportingCountryM49", 
+                          description = "Reporting Country",
+                          type = "normal"),
+                        c(code = "partnerCountryM49", 
+                          description = "Partner Country",
+                          type = "normal"),
+                        c(code = "measuredElementTrade", 
+                          description = "Element",
+                          type = "measurentUnit"),
+                        c(code = "measuredItemHS", 
+                          description = "Item",
+                          type = "normal"),
+                        c(code = "TimePointYears", 
+                          description = "Year",
+                          type = "time")
+                        ),
+  flagDefinitions = list(c(code = "flagTrade", description = "Flag")), 
+  data = list(list(keys = c("276", "842", "5600", "100110", "2011"),
+                   value = 324324,
+                   flags = ""),
+              list(keys = c("276", "842", "5621", "100110", "2011"),
+                   value = 54364654,
+                   flags = "")))
+
+l <- GetDataprocessNormalizedResult_cpp(dataList, TRUE)
+df <- as.data.frame(l)
+
+
+microbenchmark::microbenchmark(
+ data.table::as.data.table(l),
+ data.table::as.data.table(df)
+ )
+
+
+
+*/
+
+
+```
+
+# Speed testing
+
+C++ variant is more than 1000 times faster than current R variant.
+
+```
+> microbenchmark(R = convdatar(data, T),
++                cpp = faosws:::GetData.processNormalizedResult(data, T))
+Unit: milliseconds
+ expr         min          lq        mean      median          uq        max neval
+    R 1932.269826 2153.555856 2419.932984 2356.233188 2655.744569 3096.60532   100
+  cpp    1.779455    2.111039    2.522604    2.323293    2.514463   16.76912   100
+```

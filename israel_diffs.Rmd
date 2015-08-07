@@ -1,0 +1,121 @@
+---
+title: "Differences between TF_SOURCE and Comtrade for Israel"
+author: "Aleksandr Matrunich"
+date: "June 16, 2015"
+output: 
+  html_document:
+    toc: true
+---
+Last update: `r Sys.time()`
+
+
+# Introduction
+
+We want to find cases of imputing missing quantities in Comtrade data for Israel
+
+
+```{r, echo = F, warning=F}
+knitr::opts_knit$set(width = 100)
+library(fclhs)
+suppressPackageStartupMessages(library(dplyr))
+
+# Class for accessing DB with OJDBC
+.ojdbcclasspath <- "/home/sas/dstrbs/ojdbc14.jar"
+
+source("/home/sas/sws/sws_r_api/r_modules/trade_prevalidation/vignettes/setupconnection.R")
+
+```
+
+
+Getting data from TF_SOURCE*
+
+```{r, warning=F}
+tfsource <- cbind(gettfsource(reporter = 105, 
+                              year = 2011),
+                  year = 2011)
+
+head(tfsource, 10)
+```
+
+## Trimming to 6-digits HS codes and removing nonagricult items
+
+```{r}
+tfsource <- tfsource %>% 
+  mutate(hs = stringr::str_extract(hs, "^.{6}")) %>% 
+  group_by(year, reporter, partner, flow, hs) %>% 
+  summarize(qty = sum(qty),
+            qty2 = sum(qty2),
+            value = sum(value))
+
+
+# Remove non agri items
+tfsource <- data.frame(hs = getAgriHSCodes(), stringsAsFactors = F) %>% 
+  inner_join(tfsource, by = "hs")
+any(!(unique(tfsource$hs) %in% getAgriHSCodes()))
+
+# Filter flows without quantity
+
+no_quant10 <- tfsource %>% 
+  mutate(no_quant = qty == 0 & qty2 == 0 & value > 0) %>% 
+  filter(no_quant) %>% 
+  top_n(10, (value))
+
+```
+
+
+
+
+And for comparison similar data from SWS.
+
+```{r}
+swsdata <- readRDS("/home/sas/sws/sws_r_api/USGEIL_agri.rds") %>% 
+  filter(reportingCountryM49 == unctarea(105)) %>%
+  mutate_(reporter = ~faoarea(reportingCountryM49),
+          partner  = ~faoarea(partnerCountryM49),
+          flow     = ~as.integer(getElementCodeDesc(measuredElementTrade)$direction),
+          unit     = ~getElementCodeDesc(measuredElementTrade)$unit,
+          group    = ~getElementCodeDesc(measuredElementTrade)$unitgroup,
+          year     = ~as.integer(timePointYears)) %>% 
+  select(reporter, partner, flow, group, year, hs = measuredItemHS, value = Value, flag = flagTrade) %>% 
+  reshape2::dcast(... ~ group) %>% 
+  rename(value_sws = cost, heads_sws = head, weight_sws = weight, volume_sws = volume) 
+```
+
+```{r}
+no_quant10 <- no_quant10 %>% 
+  left_join(swsdata, by = c("reporter", "partner", "year", "flow", "hs")) %>% 
+  select(-no_quant) %>% 
+  select(reporter, year, partner, hs, flow, qty, qty2, value, value_sws, heads_sws, weight_sws, volume_sws, flag_sws = flag)
+```
+
+```{r}
+no_quant10$qty_api <- NA
+no_quant10$weight_api <- NA
+no_quant10$value_api <- NA
+no_quant10$flag_api <- NA
+
+for (i in seq_len(nrow(no_quant10))) {
+  api <- getunct(area = unctarea(no_quant10$reporter[i]),
+                 year = no_quant10$year[i],
+                 partner = unctarea(no_quant10$partner[i]),
+                 code = no_quant10$hs[i],
+                 flow = no_quant10$flow[i],
+                 desc = T,
+                 compact = F)
+  
+  no_quant10[i, "qty_api"] <- api$TradeQuantity
+  no_quant10[i, "weight_api"] <- api$NetWeight
+  no_quant10[i, "value_api"] <- api$TradeValue
+  no_quant10[i, "flag_api"] <- api$estCode
+  
+  Sys.sleep(1)
+                 
+}
+
+no_quant10
+
+```
+
+Flag refers to quantity/netweight estimation:
+
+0 = no estimation, 2 = quantity, 4 = netweight, 6 = both quantity and netweight

@@ -1,0 +1,35 @@
+---
+title: "Untitled"
+author: "Aleksandr Matrunich"
+date: "July 13, 2015"
+output: pdf_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+output <- 
+  matrix(paste("Content", LETTERS[1:16]), 
+         ncol=4, byrow = TRUE)
+
+library(htmlTable)
+htmlTable(output,
+          header =  paste(c("1st", "2nd",
+                            "3rd", "4th"), "header"),
+          rnames = paste(c("1st", "2nd",
+                           "3rd", "4th"), "row"),
+          rgroup = c("Group A",
+                     "Group B"),
+          n.rgroup = c(2,2),
+          cgroup = c("Cgroup 1", "Cgroup 2&dagger;"),
+          n.cgroup = c(2,2), 
+          caption="Basic table with both column spanners (groups) and row groups",
+          tfoot="&dagger; A table footer commment")
+```
+
+You can also embed plots, for example:
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

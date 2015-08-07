@@ -1,0 +1,187 @@
+---
+title: "Comparison of trade data sources"
+author: "Aleksandr Matrunich"
+date: "June 12, 2015"
+output: 
+  html_document:
+    toc: true
+---
+Last update: `r Sys.time()`
+
+
+# Introduction
+
+We want to compare ComTrade data from TF_SOURCE and SWS
+
+
+# Getting data and calculation
+
+```{r, echo = F, warning=F}
+knitr::opts_knit$set(width = 100)
+library(fclhs)
+suppressPackageStartupMessages(library(dplyr))
+
+# Class for accessing DB with OJDBC
+.ojdbcclasspath <- "/home/sas/dstrbs/ojdbc14.jar"
+
+source("/home/sas/sws/sws_r_api/r_modules/trade_prevalidation/vignettes/setupconnection.R")
+
+```
+
+
+Getting data from TF_SOURCE*
+
+```{r, warning=F}
+tfsource <- bind_rows(
+  cbind(gettfsource(reporter = c(231, 105, 79), year = 2010), year = 2010),
+  cbind(gettfsource(reporter = c(231, 105, 79), year = 2011), year = 2011))
+
+head(tfsource, 10)
+```
+
+## What is missing value in TF_SOURCE
+
+How to calculate missing values? Is there NAs?
+
+```{r}
+tfsource %>% 
+  summarize(qty_na  = sum(is.na(qty)),
+            qty2_na = sum(is.na(qty2)),
+            qty_0   = sum(qty == 0),
+            qty2_0  = sum(qty2 == 0))
+```
+
+Only zeros and no NAs. So we'll use zeros as missing values.
+
+## How many digits in HS-codes from TF_SOURCE?
+
+```{r}
+tfsource %>% 
+  select(hs) %>% 
+  mutate(hsdigits = stringr::str_length(hs)) %>% 
+  group_by(hsdigits) %>% 
+  summarize(flowstotal = n())
+```
+
+OK, so to compare with SWS we need to aggregate down to 6 digits.
+
+## Trimming to 6-digits HS codes
+
+```{r}
+tfsource <- tfsource %>% 
+  mutate(hs = stringr::str_extract(hs, "^.{6}")) %>% 
+  group_by(year, reporter, partner, flow, hs) %>% 
+  summarize(qty = sum(qty),
+            qty2 = sum(qty2),
+            value = sum(value))
+```
+
+
+## Are there other than agricultural items?
+
+```{r}
+any(!(unique(tfsource$hs) %in% getAgriHSCodes()))
+```
+OK, they are. So we need them to be filter out.
+
+
+## Removing non-agricultural HS-items
+
+```{r}
+tfsource <- data.frame(hs = getAgriHSCodes(), stringsAsFactors = F) %>% 
+  inner_join(tfsource, by = "hs")
+any(!(unique(tfsource$hs) %in% getAgriHSCodes()))
+```
+
+## Aggregation
+
+```{r}
+tfsource_agg <- tfsource %>% 
+  group_by(year, reporter) %>% 
+  summarize(totalflows  = n(),
+            noqty       = sum(qty == 0 & qty2 == 0 & value > 0),
+            noqty_prcnt = round(100 * noqty / totalflows, 2),
+            novl        = sum(qty > 0 & qty2 > 0 & value == 0),
+            novl_prcnt  = round(100 * novl / totalflows, 2))
+```
+
+And for comparison similar data from SWS.
+
+```{r}
+swsdata <- readRDS("/home/sas/sws/sws_r_api/USGEIL_agri.rds") %>% 
+  humanizeComtrade() %>% 
+  select(-unit) %>%
+  reshape2::dcast(... ~ group) %>%  
+  group_by(reporter) %>% 
+  summarize(
+    totalflows = n(),
+    noquant = sum(((weight == 0 | is.na(weight)) &
+                     (volume == 0 | is.na(volume)) &
+                     (head == 0 | is.na(head))) &
+                    cost > 0, 
+                  na.rm = T),
+    noquantprcnt   = round(100 * noquant / totalflows, 2),
+    novalue = sum((weight > 0 | volume > 0 | head > 0) & 
+                    (is.na(cost) | cost == 0), na.rm = T),
+    novalueprcnt   = round(100 * novalue / totalflows, 2))
+```
+# --> Final tables for comparison <--
+SWS data only for 2011 year. I've added 2010 year in TF_SOURCE table to be sure that the absence of Germany's data is year-specific.
+```{r final_tables}
+swsdata
+
+tfsource_agg
+```
+We observe similar amounts of trade flows for Israel (105) and USA (231). Amount of trade flow with no quantity differs much for Israel.
+
+# Investigation of absence of Germany data in TF_SOURCE
+
+In TFSOURCE there is no data for Germany (79) from 2011! Let's check other sources on small example (Bovine).
+
+Data from UN ComTrade [public API](http://comtrade.un.org/data/).
+
+```{r, warning=F, message=F}
+unct <- getunct(area = paste(unctarea(79), unctarea(231), sep = ","), 
+                      year = "2011, 2010",
+                      partner = unctarea(fclhs:::findfaoareacode("Canada")),
+                      code = "010210",
+                      desc = T,
+                      compact = F)
+unct
+```
+
+There is data for Germany only for 2011 year and its flow has flag 2. I didn't find description of the flags.
+
+Similar data from TF_SOURCE.
+
+```{r, message=F}
+tfsource %>% 
+  filter(reporter %in% c(231, 79),
+         stringr::str_detect(hs, "^010210"),
+         partner == fclhs:::findfaoareacode("Canada"))
+```
+
+It has 10 digits in HS code. Let's aggregate to 6 digits.
+
+```{r, message=F}
+tfsource %>% 
+  filter(reporter %in% c(231, 79),
+         stringr::str_detect(hs, "^010210"),
+         partner == fclhs:::findfaoareacode("Canada")) %>% 
+  mutate(hs = stringr::str_extract(hs, "^.{6}")) %>% 
+  group_by(year, reporter, partner, flow, hs) %>% 
+  summarize(qty = sum(qty),
+            qty2 = sum(qty2),
+            value = sum(value))
+# And public API Comtrade
+unct %>% select(yr, flow = rgDesc, reporter = rtTitle, partner = ptTitle, hs = cmdCode, qtDesc,
+                qty = TradeQuantity, kg = NetWeight, value = TradeValue, flag = estCode)
+```
+
+```{r}
+getComtradeData(reporter = c(842, 276), partner = 124, year = 2010:2011, item = "010210", 
+                element  = selectElems(unit %in% c("kg", "US$", "t", "1000 t", "head", "1000 head"))) %>% 
+  humanizeComtrade() %>% 
+  group_by(year, reporter, dir, unit)
+```
+

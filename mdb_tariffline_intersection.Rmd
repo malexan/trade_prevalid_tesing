@@ -1,0 +1,90 @@
+---
+title: 'Intersection of MDB and Tariffline sets of HS-codes'
+author: "Aleksandr Matrunich"
+date: "July 6, 2015"
+output: 
+  html_document:
+    toc: true
+---
+Last update: `r Sys.time()`
+
+```{r options, echo = F, warning=F}
+options(width = 120)
+.pwd <- "KlO%0cTEm"
+suppressWarnings(library(fclhs))
+suppressPackageStartupMessages(library(dplyr))
+
+# Class for accessing DB with OJDBC
+.ojdbcclasspath <- file.path(Sys.getenv("HOME"), "dstrbs", "ojdbc14.jar")
+
+source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
+
+trade_src <- src_postgres("sws_data", "localhost", 5432, "trade", .pwd, 
+                          options = "-c search_path=ess")
+
+cttl <- tbl(trade_src, sql("select * from tariffline"))
+```
+
+```{r read_mdbdata}
+
+mdbdata <- data.table::fread(file.path(Sys.getenv("HOME"), "r_adhoc", "mdb_read", "hs_fcl_full.csv"),
+                              data.table = F)
+
+
+mdbdata$validyear[mdbdata$validyear == ""] <- "0"
+mdbdata$validyear <- as.integer(mdbdata$validyear)
+
+head(mdbdata)
+```
+
+Proportion of records where there is only one code and not a range of codes: `r 
+mdbdata %>% 
+  summarize(singlecode = paste0(round(100 * sum(fromcode == tocode) / n(), 1), "%")) %>% 
+  unlist() %>% unname()`
+
+```{r tariff_ex}
+tbl(trade_src, sql("select * from tariffline limit 10"))
+
+```
+
+```{r us2011_collect}
+
+agriItems <- paste0("'", paste(getAgriHSCodes(), collapse = "','"), "'")
+
+tl_us2011 <- tbl(trade_src, sql(paste0(
+"select * from (select year, reporter, partner, flow, hs, substring(hs from 1 for 6) AS hs6  
+from tariffline
+where reporter = '842' and year = '2011') as tbl1 
+where hs6 in(", agriItems, ") "))) %>% 
+  select(-hs6) %>% collect()
+
+mdb_us2011 <- mdbdata %>% 
+  select(-area, -iso2, -country, -cpc) %>% 
+  filter(fao == faoarea(842), 
+         validyear %in% c("0", "2011"))
+```
+
+Proportion of records where there is only one code and not a range of codes: `r 
+mdb_us2011 %>% 
+  summarize(singlecode = paste0(round(100 * sum(fromcode == tocode) / n(), 1), "%")) %>% 
+  unlist() %>% unname()`
+  
+  
+OK, so for US 2011 there is no ranges of HS codes so we can postpone problem of matching HS-code to range from mdb data.
+
+Degree of matching HS-codes between MDB base and TariffLine.
+
+```{r simple_match}
+
+tl_us2011 %>% 
+  filter(flow == "1") %>% 
+  select(hs) %>% 
+  distinct() %>%  
+  anti_join(mdb_us2011 %>% 
+              filter(flow == "Import") %>% 
+              select(hs = fromcode, fcl) %>% 
+              distinct(), 
+            by = "hs") %>% 
+  nrow()
+```
+

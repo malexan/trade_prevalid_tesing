@@ -1,0 +1,297 @@
+---
+title: "Trade Example"
+author: "Aleksandr Matrunich"
+date: "July 8, 2015"
+output: 
+  html_document:
+    toc: true
+---
+Last update: `r Sys.time()`
+
+```{r options, echo = F, warning=F}
+options(width = 120)
+.pwd <- "KlO%0cTEm"
+suppressPackageStartupMessages(library(dplyr))
+library(ggplot2)
+
+
+source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
+
+
+
+get_madb_export <- function(country, hs) {
+  url <- "http://madb.europa.eu/"
+  
+  r <- rvest::html(url,
+                   path ="madb/atDutyOverviewPubli.htm",
+                   query = list(option = 1,
+                                display = 50,
+                                language = "all",
+                                year1 = "",
+                                year2 = "",
+                                sector = "all",
+                                country = "all",
+                                langId = "en",
+                                datacat_id = "AT",
+                                showregimes = "",
+                                countryid = country,
+                                submit = "Search",
+                                countries = country,
+                                hscode= hs))
+  
+  
+  tbl <- rvest::html_nodes(r, xpath = "//table[1]") %>% 
+    rvest::html_table(fill = T, header = T) %>% 
+    as.data.frame(stringsAsFactors = F) %>% 
+    select(hs = 1, desc = 2) %>% 
+    mutate(
+      dash = stringr::str_replace(
+        stringr::str_extract(desc, 
+                             "^.*?[A-Za-z]{1}"), 
+        "[A-Za-z]$", ""),
+      desc = stringr::str_replace(desc, "^(- )*", "")
+    )
+  
+  tbl %>% select(-dash) %>% 
+  filter(!is.na(hs))
+}
+
+
+trade_src <- src_postgres("sws_data", "localhost", 5432, "trade", .pwd, 
+                          options = "-c search_path=ess")
+
+cttl <- tbl(trade_src, sql("select * from tariffline"))
+
+
+
+
+```
+
+## Wheat in HS
+
+```{r wheat_hs, echo = FALSE}
+
+getAllItems() %>% 
+  filter(stringr::str_detect(code, "^1001")) %>% 
+  arrange(code)
+
+```
+
+
+
+## Which HS-code shoud we select?
+
+```{r hs_code_detection, message=FALSE}
+getHSCode("boneless|bone in|wheat|palm") %>% arrange(code)
+```
+
+Let's take 020230.
+
+
+## US country code
+
+```{r country_code_det}
+getCountryCode("USA\\(1981") 
+```
+
+## Data on import reported by USA
+
+```{r example_of_data, echo = FALSE}
+usimp <- tbl(trade_src, sql("select * from (select 
+year, reporter, partner, hs, flow, weight, qty, qunit, value, 
+substring(hs from 1 for 6) as hs6 from tariffline
+where year = '2011' and 
+reporter = '842' and flow = '1') as tbl1 
+where hs6 = '020230'"))
+
+usimp %>% select(-hs6) 
+```
+
+## Data on export in USA reported by trade partners
+
+There is no 842 country code!
+
+```{r no842, echo = FALSE}
+tbl(trade_src, sql("select count(*) as number_of_flows from tariffline
+where partner = '842'"))
+```
+
+Let's check trade leaders.
+
+```{r detect_usa_code, echo = F}
+tbl(trade_src, sql("select partner, count(partner) as number_of_flows 
+ from tariffline
+where year = '2011' group by partner order by number_of_flows desc limit 10"))
+```
+
+Leader is 840. And not far from 842. USA?
+
+```{r export_to_us, echo = F}
+exptous <- tbl(trade_src, sql("select * from (select 
+year, reporter, partner, hs, flow, weight, qty, qunit, value, 
+substring(hs from 1 for 6) as hs6 from tariffline
+where year = '2011' and 
+partner = '840' and flow = '2') as tbl1 
+where hs6 = '020230'")) 
+
+exptous %>% select(-hs6) %>% collect() %>% as.data.frame()
+```
+
+## Units of measurement (preparation for aggregation)
+
+Do we have different units for one HS6 code?
+
+Units reported by the US.
+
+```{r us_reported_units, echo = F}
+usimp %>% 
+  select(qunit) %>% 
+  distinct() %>% collect() %>% 
+  as.data.frame()
+```
+
+Units reported by partners of the US.
+
+```{r partners_reported_units, echo = F}
+exptous %>% 
+  select(qunit) %>% 
+  distinct() %>% collect() %>% 
+  as.data.frame()
+```
+
+OK, we have only one unit. It's 8 - kg.
+
+## Differencies in sets of countries
+
+
+```{r partners_reported_only_by_us, echo = F}
+usimp %>% 
+  select(area = partner) %>% collect() %>% 
+  distinct() %>% 
+  anti_join(exptous %>% collect() %>% 
+              select(area = reporter) %>% 
+              distinct(), 
+            by = "area") %>% 
+  nrow()
+```
+
+The are no cases, when the US report import from a partner, but the partner doesn't report such export to the US.
+
+
+```{r partners_reported_only_by_reporters, echo = F}
+missing_reporters <- exptous %>% 
+  select(area = reporter) %>% collect() %>% 
+  distinct() %>% 
+  anti_join(usimp %>% collect() %>% 
+              select(area = partner) %>% 
+              distinct(), 
+            by = "area") %>% 
+  mutate(country_name = getCountryName(area)) %>% 
+  as.data.frame()
+
+missing_reporters
+```
+
+There are 5 cases, when a partner reports export to the US, but the US don't report import from the partner. We could apply mirroring here to fill missed data, but it's possible that partners have used other HS-codes for these commodities.
+
+
+## Trade flows with zero quantity
+
+```{r zero_quantity, echo = F}
+
+usimp_wide <- tbl(trade_src, sql("select * from (select 
+year, reporter, partner, hs, flow, weight, qty, qunit, value, 
+substring(hs from 1 for 2) as hs6 from tariffline
+where reporter = '842' and flow = '1') as tbl1 
+where hs6 in ('02', '10', '15')"))
+usimp_wide %>% 
+  filter(is.na(weight)) %>% 
+summarize (no_quantity = n()) %>% 
+  collect() %>% 
+  as.data.frame()
+```
+
+## Differencies between HS schemes 
+
+Harmonized system classification is globally declared up to 6 digits. At more detailed level every country can extend HS to better respond to local circumstances. These are country-specific descriptions under 0202 heading 
+
+```{r hs_country_specifics}
+get_madb_export("US", "020230") 
+
+
+get_madb_export("BR", "020230") 
+```
+
+
+
+## Calculation of unit value and outlier detection
+```{r aggr}
+usimp6 <- usimp %>% 
+  group_by(year, reporter, partner, flow, hs6, qunit) %>% 
+  summarize(weight = sum(weight),
+            qty = sum(qty),
+            value = sum(value)) %>% 
+  mutate(unitvalue = value / weight) %>% 
+  ungroup()
+
+usimp6 %>% 
+  arrange(desc(unitvalue)) 
+
+usimp6 %>% 
+  select(unitvalue) %>% 
+  collect() %>% 
+  ggplot() + geom_density(aes(unitvalue))
+
+```
+
+Let's assume that unit value more than $5000/tn is outlier. Usually value is reported by customs more accurately than quantity. In case of bigger than usual unit value quantity could be underestimated. 
+
+```{r estimation_of_quantity}
+usimp6 %>% collect() %>% 
+  filter(unitvalue > 5)
+```
+
+We could estimate quantity using country-specific median unit value.
+
+## Replacement of outliers
+
+```{r median_uv}
+usimp6 %>% collect() %>% 
+  summarize(unitvalue = median(unitvalue))
+```
+
+```{r estimation_of_qty}
+usimp6 %>% collect() %>% 
+  select(-year, -reporter, -partner, -flow, -hs6, -qunit, -qty) %>% 
+  mutate(median_uv = median(unitvalue)) %>% 
+  filter(unitvalue > 5) %>% 
+  mutate(new_weight = round(value / median_uv),
+         weight_diff = new_weight - weight)
+```
+
+
+Else we can use for computing of quantity global unit value, unit value estimated from time series or take quantity reported by trade partner.
+
+## Range of unit values for all reporters
+
+```{r bovine_global}
+
+bovine_global_imp <- tbl(trade_src, sql("select * from (select 
+year, reporter, partner, hs, flow, weight, qty, qunit, value, 
+substring(hs from 1 for 6) as hs6 from tariffline
+where flow = '2' and year = '2011') as tbl1 
+where hs6 in ('020230')"))
+bovine_global_imp %>% 
+  group_by(year, reporter, partner, flow, hs6, qunit) %>% 
+  summarize(weight = sum(weight),
+            qty = sum(qty),
+            value = sum(value)) %>% 
+  mutate(unitvalue = value / weight) %>% 
+  ungroup() %>% 
+  select(reporter, unitvalue) %>% 
+  collect() %>% 
+  ggplot() + geom_boxplot(aes(reporter, unitvalue, fill = reporter == '842')) +
+  scale_y_log10()
+
+```
+

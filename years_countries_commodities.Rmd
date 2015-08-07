@@ -1,0 +1,262 @@
+---
+title: "Differences in quality across countries, years and commodities"
+author: "Aleksandr Matrunich"
+date: "July 30, 2015"
+output: 
+  html_document:
+    toc: true
+---
+
+Last update: `r format(Sys.time(), "%b %d %X %Y %Z")`
+
+```{r options, echo = F, warning=F}
+options(width = 120)
+suppressPackageStartupMessages(library(dplyr))
+# library(ggplot2)
+library(ggvis)
+
+source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
+
+subdir <- "OrangeBook"
+sourcedir <- "tradeR"
+
+if(length(lapply(dir(file.path(Sys.getenv("HOME"), "r_adhoc", "privateFAO", subdir, sourcedir), 
+                     full.names = T), 
+                 source)) == 0) stop("Files for sourcing not found")
+
+trade_src <- src_postgres("sws_data", "localhost", 5432, "trade", .pwd, 
+                          options = "-c search_path=ess")
+
+#cttl <- tbl(trade_src, sql("select * from tariffline"))
+```
+
+At prevalidation step we are to make a decision should we accept data from a specific country for the further processing or not. A country could provide data of good quality for one part of commodities and inadequate level of quality for another part. We want to estimate quality differences between commodities of a country.
+
+Quality of data is estimated by following indicators:
+
+* Share per cent of missing quantities
+* Share per cent of unit value outliers
+
+Procedure:
+
+1. Mark trade flows with problems.
+2. Group data set by year, reporter and some level of commodities.
+
+```{r diagram, echo = F}
+DiagrammeR::mermaid("
+graph LR
+D(Test every flow) --> A(Aggregate) 
+A --> C(Calculate)
+", height = 200)
+```
+
+## Required functions
+
+### Trade flow testing
+
+#### Missing quantity or value
+
+On input:
+
+* Vector with data
+* Vector with values we treat as missing (NA, 0, etc)
+
+On output:
+
+Vector of logical values (is it missing or not)
+
+```{r missing_indicator_f}
+missingIndicator <- function(indicator, missingCases) {
+  indicator %in% missingCases
+}
+```
+
+
+
+#### Unit value outlier
+
+We suggest to use median reporter unit value.
+
+Input:
+
+* Vector with unit values
+* Function to use
+* Additional parameters for function
+
+## Calculations 
+```{r, echo = F}
+data_db <- tbl(trade_src, sql("
+select * from ess.agri
+"))
+
+
+head(data_db)
+
+data_db %>% 
+  filter(year == "2011") %>% 
+  group_by(hs2) %>% 
+  summarize(total_rows = n()) %>% 
+  arrange(hs2) %>% 
+  head
+
+```
+
+### Trade flows with missing quantity
+
+We identify which reporters provide data of insufficient quality. Firstly for every reporter proportion of trade flows with missing quantity is calculated. 
+
+```{r missings_by_reporter, echo = F, warning = F}
+
+# This data will be used also later.
+data <- data_db %>% 
+  filter(year == "2011") %>% 
+  collect() %>% 
+  mutate(no_quant = missingIndicator(weight, NA) &
+           missingIndicator(qty, NA)) %>% 
+  left_join(getComtradeM49(), by = c("reporter" = "code"))
+
+no_quant_threshold <- .02
+
+data %>% 
+  group_by(reporter) %>% 
+  summarize(miss = sum(no_quant) / n()) %>% 
+  filter(miss > no_quant_threshold) %>% 
+  left_join(getComtradeM49(), by = c("reporter" = "code")) %>% 
+  ggvis(x = ~miss, y = ~reorder(name, desc(miss))) %>% 
+  layer_points() %>% 
+#   add_tooltip(function(d) paste0(d[[2]], 
+#                                  ": ",
+#                                  paste0(round(100 * d$miss, 2), "%"))) %>% 
+  set_options(height = 700, width = 480) %>% 
+  add_axis("x", title = "Trade flows with missing quantity", format = "%") %>% 
+  add_axis("y", title = "") 
+```
+
+Four countries, Bermuda, Lesotho, Palau and Palestine, in 2011 didn't provide quantities at all. Countries with no more than `r scales::percent(no_quant_threshold)` of trade flows with missing quantity are removed from the graph. 
+
+In the following graph we calculate proportion of trade flows with missing quantities for every HS heading separately. Some countries provide nearly the same proportion of missing quantities across all HS headings. For example, Germany reports quantities almost under all HS headings. Exceptions include headings 50, 52, 53. But amount of missing indicators is close to zero: no more than 2.44%. In case of the United States there are reported headings with proportion of missing quantities up to 30%.
+
+```{r missings_by_reporter_and_hs, echo = F, warning = F}
+hs2_miss <- data %>% 
+  group_by(name, hs2) %>% 
+  summarize(n_of_miss = sum(no_quant) / n()) %>% 
+  group_by(name) %>% 
+  mutate(me_miss = median(n_of_miss)) %>% 
+  ungroup() %>% 
+  mutate(id = seq_len(n()))
+
+
+hs2_miss %>% 
+  group_by(name) %>% 
+  mutate(max_miss = max(n_of_miss)) %>% 
+  filter(max_miss > 0) %>% 
+  ungroup() %>% 
+  ggvis(y = ~reorder(name, desc(me_miss)),
+        x = ~n_of_miss,
+        key := ~id) %>% 
+  layer_points(size := 40,
+               opacity := .2) %>% 
+  set_options(height = 1400, width = 600) %>% 
+  add_axis("x",
+           title = "Share of trade flows with missing quantity", 
+           format = "%") %>% 
+  add_axis("y", title = "") #, 
+#            properties = axis_props(
+#              labels = list(# angle = 90,
+#                            align = "left",
+#                            baseline = "left"))) 
+
+
+
+```
+Interactive version of this plot is published in "Tariffline no quantity" tab of [Comtrade prevalidation](https://malexan.shinyapps.io/comtrade_prevalidation) Shiny application.
+
+#### Missings between HS-headings
+
+```{r missings_by_hs_reporters_lines, echo = F, warning = F}
+hs2_miss %>% 
+  group_by(name) %>% 
+  mutate(max_miss = max(n_of_miss)) %>% 
+  filter(max_miss > 0) %>% 
+  ungroup() %>% 
+  ggvis(x = ~stats::reorder(name, me_miss), # After reorder we gett warning about levels
+        y = ~n_of_miss, 
+        stroke = ~hs2) %>% 
+  layer_lines()%>% 
+  add_axis("y", 
+           title = "Share of trade flows with missing quantity", 
+           format = "%", 
+           title_offset = 50) %>% 
+  add_axis("x", title = "", 
+           properties = axis_props(
+             labels = list(angle = 270,
+                           align = "right",
+                           baseline = "left"))) %>% 
+  hide_legend("stroke") %>% 
+  set_options(height = 500, width = 1000)
+```
+
+### Outliers
+
+It was shown before median is suitable measure of central tendency of unit value distribution. Between global and reporter median unit value it is better to choose reporter median value. To compare reporters by amount of outliers for each reporter we calculate median proportion of unit value differences.
+
+#### Calculations 
+
+$$ Me_{reporter} \left [ \frac{x_{trade flow} - Me_{commodity_{reporter}}}
+{x_{trade flow}} \right ] $$
+
+1. Prepare data.
+    1. Calculate unit value for every trade flow.
+    2. Calculate median reporter unit value for every commodity.
+    3. Calculate difference between unit value of a trade flow and reporter unit value.
+    4. Calculate proportion of the difference and unit value.
+2. Assess reporters.
+    1. Calculate median of proportions for each reporter.
+
+```{r unit_values, echo = F}
+## MAD
+
+# data %>% 
+#   mutate(
+#     qty_all = ifelse(!is.na(weight), weight, qty),
+#     uv = value / qty_all) %>% 
+#   select(-qty_all) %>% 
+#   group_by(reporter, hs) %>% 
+#   mutate(uv_rep = median(uv, na.rm = T)) %>% 
+#   ungroup() %>% 
+#   mutate(uv_diff_prop = abs((uv - uv_rep) / uv)) %>% 
+#   group_by(name) %>% 
+#   summarize(uv_diff_prop = median(uv_diff_prop, na.rm = T)) %>% 
+#   ggvis(x = ~uv_diff_prop,
+#         y = ~stats::reorder(name, desc(uv_diff_prop))) %>% 
+#   layer_points()
+    
+## IQR
+
+out_coef <- 1.5
+
+data %>% 
+  mutate(
+    qty_all = ifelse(!is.na(weight), weight, qty),
+    uv = value / qty_all) %>% 
+  select(-qty_all) %>% 
+  group_by(reporter, hs) %>% 
+  mutate(out_range = uv %in% boxplot.stats(uv, coef = out_coef, do.conf = F)) %>%
+  group_by(name) %>% 
+  summarize(prop_of_outs = sum(out_range) / n()) %>%
+  filter(prop_of_outs > 0) %>%
+  top_n(50, prop_of_outs) %>% 
+  ggvis(x = ~prop_of_outs,
+        y = ~stats::reorder(name, desc(prop_of_outs))) %>% 
+  layer_points() %>% 
+  add_axis("x", 
+           title = "Share of trade flows with UV-outliers", 
+           format = "%", 
+           title_offset = 50) %>% 
+  scale_numeric("x", domain = c(0, .05)) %>% 
+  add_axis("y", title = "") %>% 
+  set_options(height = 800, width = 500)
+  
+  
+```
+

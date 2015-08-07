@@ -1,0 +1,322 @@
+---
+title: 'Tariff line data: first impressions'
+author: "Aleksandr Matrunich"
+date: "June 25, 2015"
+output: 
+  html_document:
+    toc: true
+---
+Last update: `r Sys.time()`
+
+```{r options, echo = F, warning=F}
+options(width = 120)
+.pwd <- "KlO%0cTEm"
+library(fclhs)
+suppressPackageStartupMessages(library(dplyr))
+
+# Class for accessing DB with OJDBC
+.ojdbcclasspath <- "/home/sas/dstrbs/ojdbc14.jar"
+
+source("/home/sas/sws/sws_r_api/r_modules/trade_prevalidation/vignettes/setupconnection.R")
+
+tlsql <- function(select = NULL, where = NULL) {
+  
+  if(!is.null(select)) select <- list(select)
+  
+  faosws::GetTableData(schemaName = "ess",
+                       tableName = "ct_tariffline_adhoc", 
+                       whereClause = where, 
+                       selectColumns = select)
+  
+  
+}
+
+trade_src <- src_postgres("sws_data", "localhost", 5432, "trade", .pwd, 
+                          options = "-c search_path=ess")
+
+cttl <- tbl(trade_src, "ct_tariffline_adhoc")
+
+```
+
+## Introduction
+
+We got tariff line data from UNSD. It's stored in ad hoc table `ess.ct_tariffline_adhoc` at QA SWS server. Currently it's possible to access the data only from R.
+
+## Structure of Tariff Line table
+
+### Size of dataset
+
+For all countries and years.
+
+```{r nrow}
+cttl %>% summarize(nrows = n())
+```
+
+### Example of data
+```{r structure}
+cttl
+
+
+tbl(trade_src, sql(
+"select * 
+from ess.ct_tariffline_adhoc 
+where rep in ('376', '842', '276') order by random() limit 20")) %>%
+  collect() %>% as.data.frame()
+
+```
+### Range of years
+
+For all countries
+
+```{r years_range}
+cttl %>% 
+  select(tyear) %>% 
+  group_by(tyear) %>% 
+  summarize(nrows = n()) %>% 
+  arrange(tyear) %>% collect()
+```
+
+### Type of classification used by reporter
+
+For all countires.
+
+```{r classific_type}
+tlsql(select = "hsrep, count(hsrep)", where = "group by hsrep order by hsrep") %>%  
+  mutate(hsrep = factor(hsrep, levels = c("H0", "H1", "H2", "H3", "H4", "S3"),
+                        labels = c("HS1992", "HS1996", "HS2002", 
+                                   "HS2007", "HS2012", "SITCr3")))
+```
+
+### Lenght of hs codes
+
+#### Full data set
+
+```{r hs_length}
+tbl(trade_src, sql("
+select hs_length, count(hs_length) as countn 
+from (select char_length(comm) as hs_length 
+from ess.ct_tariffline_adhoc) as tbl1 
+group by hs_length order by hs_length
+                   ")) %>% collect()
+```
+
+#### Countries of the question
+
+```{r hs_length_subset}
+tbl(trade_src, sql("
+select hs_length, count(hs_length) as countn 
+from (select char_length(comm) as hs_length 
+from ess.ct_tariffline_adhoc where rep in ('376', '842', '276')) as tbl1 
+group by hs_length order by hs_length
+                   ")) %>% collect()
+```
+
+### Reported flows
+
+For all countires.
+
+```{r flows}
+tlsql(select = "flow, count(flow)", where = "group by flow order by flow") 
+```
+
+### Reported units
+
+For all countires.
+
+```{r units}
+tlsql(select = "qunit, count(qunit)", where = "group by qunit order by qunit") 
+```
+See description of units in Annex I of [Quantity and Weight Data in UN Comtrade](http://unstats.un.org/unsd/tradekb/Knowledgebase/Quantity-and-Weight-Data-in-UN-Comtrade).
+
+### Are there estimations?
+
+For all countires.
+
+```{r est}
+# tlsql(select = "est, count(est)", where = "group by est order by est") 
+tlsql(select = "sum( case when est != '0' then 1 else 0 end) as estimations") 
+```
+There is no estimated values.
+
+### What does contain ht column?
+
+```{r ht_column}
+tlsql(select = "ht, count(ht)", where = "group by ht") 
+```
+
+There is only zero in column ht.
+
+
+## What is missing value in Tariff Line data
+
+It could be zero or NULL. We already saw NA weight and qty in random sample.
+
+For all countries.
+
+```{r missings}
+
+miss <- tbl(trade_src, sql("select sum (case when weight is null then 1 else 0 end) as weight_null,
+      sum (case when qty is null then 1 else 0 end) as qty_null,
+      sum (case when tvalue is null then 1 else 0 end) as tvalue_null,
+      sum (case when weight = 0 then 1 else 0 end) as weight_0,
+      sum (case when qty = 0 then 1 else 0 end) as qty_0,
+      sum (case when tvalue = 0 then 1 else 0 end) as tvalue_0 from ess.ct_tariffline_adhoc ")) %>% 
+  collect() %>% as.integer()
+
+dim(miss) <- c(3, 2)
+colnames(miss) <- c("NA", "zero")
+rownames(miss) <- c("weight", "qty", "tvalue")
+miss
+
+```
+
+We have null (in R they are converted into NA) cases for weight and qty and zero cases for value.
+
+## Conflicts between units
+
+Are there cases when for the same trade flow we have several records with different units (note from Giorgio)?
+
+```{r units_conflicts}
+agriItems <- paste0("'", paste(getAgriHSCodes(), collapse = "','"), "'")
+
+cttlagri <- tbl(trade_src, sql(paste0(
+"select * 
+from (select rep, tyear, flow, comm, substring(comm from 1 for 6) as hs6, 
+prt, weight, qty, qunit, tvalue 
+from ess.ct_tariffline_adhoc 
+where rep in ('376', '842', '276') 
+and tyear = '2011') as tbl1 
+where hs6 in(", agriItems, ") "))) %>%
+  select(-hs6)
+
+cttlagri %>%
+  group_by(tyear, rep, prt, flow, comm)  %>% 
+  summarize(nrows = n()) %>% 
+  ungroup() %>% 
+  filter(nrows > 1)
+  
+```
+
+There are now such cases for the pilot countries, but they exist in other countries. For example:
+
+```
+   tyear rep prt flow       comm nrows
+1   2011 328 780    1 2106909000     5
+2   2011 499 899    1     220290     4
+3   2011 328 531    2 0709909000     4
+4   2011 328 531    2 1904200000     4
+5   2011 328 780    1 2009112000     4
+6   2011 328 780    1 2203001000     4
+7   2011 328 780    1 2202909000     4
+8   2011 328 780    1 2202101000     4
+9   2011 328 780    2 2208401000     4
+10  2011 328 840    1 0402999000     4
+```
+
+```{r units_conflicts_case}
+
+cttl %>% 
+  select(-est, -ht) %>%
+  filter(tyear == "2011",
+         rep == "328",
+         prt == "780",
+         comm == "2106909000")
+```
+
+# Missing values
+
+```{r missing_values}
+cttl_missing <- cttlagri %>% 
+  select(rep, tyear, flow, comm, prt, weight, qty, qunit, tvalue) %>% 
+  filter(rep %in% c('376', '842', '276'),
+         tyear == "2011") %>% 
+  collect() %>% 
+  group_by(tyear, rep) %>% 
+  summarize(totalflows  = n(),
+            noqty       = sum(is.na(qty)  & is.na(weight) & tvalue > 0),
+            noqty_prcnt = round(100 * noqty / totalflows, 2),
+            novl        = sum((!is.na(qty) | !is.na(weight)) & tvalue == 0),
+            novl_prcnt  = round(100 * novl / totalflows, 2)) %>% 
+  mutate(reporter = getCountryName(rep)) %>% 
+  select(reporter, totalflows, noqty, noqty_prcnt, novl, novl_prcnt)
+
+tfsource <- gettfsource(reporter = c(231, 105, 79), year = 2011) %>% 
+  mutate(hs6 = stringr::str_extract(hs, "^.{6}"))
+
+tfsource <- data.frame(hs = getAgriHSCodes(), stringsAsFactors = F) %>% 
+  inner_join(tfsource, by = c("hs" = "hs6")) %>% 
+  select(-hs) %>% 
+  rename(hs = hs.y) %>% 
+  mutate(reporter = getCountryName(unctarea(reporter)))
+  
+
+tfsource %>% 
+  group_by(reporter) %>% 
+  summarize(totalflows  = n(),
+            noqty       = sum(qty == 0 & qty2 == 0 & value > 0),
+            noqty_prcnt = round(100 * noqty / totalflows, 2),
+            novl        = sum((qty > 0 | qty2 > 0) & value == 0),
+            novl_prcnt  = round(100 * novl / totalflows, 2)) 
+
+cttl_missing
+```
+
+### Why do sizes of TariffLine and TF_SOURCE differ?
+
+#### Differencies in sets of unique HS codes
+
+```{r sets_of_codes}
+tfsource_uniq_hs <- tfsource %>% 
+  select(hs) %>% 
+  distinct() %>% 
+  collect()
+
+tariffline_uniq_hs <- cttlagri %>% 
+  select(rep, tyear, comm) %>% 
+  filter(rep %in% c('376', '842', '276'),
+         tyear == "2011") %>% 
+  select(comm) %>% 
+  distinct() %>% 
+  select(hs = comm) %>%
+  collect()
+
+  data.frame(source = c("tfsource", "tariffline"),
+             uniq_hs = c(nrow(tfsource_uniq_hs),
+                         nrow(tariffline_uniq_hs)))
+  
+  # HS codes which are absent in TF_SOURCE
+
+  tariffline_uniq_hs %>% 
+    anti_join(tfsource_uniq_hs, by = "hs") %>% 
+    sample_n(50) %>% 
+    unlist() %>% unname() %>% as.factor() 
+  
+  # HS codes which are absent in Tariff Line
+  
+  tfsource_uniq_hs %>% 
+    anti_join(tariffline_uniq_hs, by = "hs") %>% 
+    sample_n(50) %>% 
+    unlist() %>% unname() %>% as.factor() 
+  
+  # Trimmed to 6 digits HS codes which are absent in TF_SOURCE
+  
+  tariffline_uniq_hs %>% 
+    mutate(hs = stringr::str_extract(hs, "^.{6}")) %>% 
+    anti_join(tfsource_uniq_hs %>% 
+                mutate(hs = stringr::str_extract(hs, "^.{6}")),
+              by = "hs") 
+  
+  # Trimmed to 6 digits HS codes which are absent in Tariff Line
+  
+  tfsource_uniq_hs %>% 
+    mutate(hs = stringr::str_extract(hs, "^.{6}")) %>% 
+    anti_join(tariffline_uniq_hs %>% 
+                mutate(hs = stringr::str_extract(hs, "^.{6}")),
+              by = "hs") 
+```
+
+
+
+```{r close_conn, echo = F, results = "hide"}
+RPostgreSQL::dbDisconnect(trade_src$con)
+```

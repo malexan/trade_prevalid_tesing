@@ -1,0 +1,153 @@
+---
+title: "M49 country codes in Tariffline"
+author: "Aleksandr Matrunich"
+date: "July 13, 2015"
+output: html_document
+---
+Last update: `r Sys.time()`
+
+```{r options, echo = F, warning=F}
+options(width = 120)
+suppressPackageStartupMessages(library(dplyr))
+
+source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
+
+subdir <- "OrangeBook"
+sourcedir <- "tradeR"
+
+if(length(lapply(dir(file.path(Sys.getenv("HOME"), "r_adhoc", "privateFAO", subdir, sourcedir), 
+                     full.names = T), 
+                 source)) == 0) stop("Files for sourcing not found")
+
+trade_src <- src_postgres("sws_data", "localhost", 5432, "trade", .pwd, 
+                          options = "-c search_path=ess")
+
+cttl <- tbl(trade_src, sql("select * from tariffline"))
+```
+
+Codes of reporting countries which are absent among partner countries.
+
+```{r absent_reporters}
+
+# http://explainextended.com/2009/09/16/not-in-vs-not-exists-vs-left-join-is-null-postgresql/
+
+  absent_reps <-  tbl(trade_src, sql("select distinct reporter
+from tariffline tr
+where not exists (select 1
+                   from tariffline tp
+                  where tr.reporter = tp.partner)")) %>% collect() %>% 
+    '[['("reporter")
+```
+
+```{r absent_partners}
+# absent_prts <- tbl(trade_src, sql("select distinct partner from tariffline 
+#                    left join 
+#                    (select  distinct reporter from tariffline) as tbl1
+#                    on tariffline.partner = tbl1.reporter 
+#                    where tbl1.reporter is null ")) %>% collect() %>% 
+#   '[['("partner")
+```
+
+```{r reporter_codes_in_sws}
+getCountryName(absent_reps, drop = F)
+# getCountryName(absent_prts, drop = F) %>% arrange(code) %>% as.data.frame()
+```
+
+## Possible conflicts between official M49 codes scheme and Comtrade one
+
+Codes from official M49[^officialsource] which are absent in Comtrade M49[^comtradesource].
+
+[^officialsource]: http://unstats.un.org/unsd/methods/m49/m49alpha.htm Countries or areas, codes and abbreviations 
+
+[^comtradesource]: http://comtrade.un.org/data/cache/reporterAreas.json The UN Comtrade data extraction API
+
+
+```{r official_m49_absent_in_ct}
+officialm49 <- getOfficialM49()
+comtradem49 <- getComtradeM49()
+
+officialm49[!is.element(as.integer(officialm49$code),
+                        as.integer(comtradem49$code)), ] %>% 
+  arrange(code)
+```
+
+Codes from Comtrade M49 which are absent in Official M49.
+```{r comtrade_m49}
+comtradem49[!is.element(as.integer(comtradem49$code), 
+                        as.integer(officialm49$code)), ] %>% 
+  arrange(code)
+
+```
+
+It would be useful to check matching of codes based on strings comparing.
+
+## Coverage of codes from Tariffline by official and Comtrade M49
+### Reporters not found in Comtrade scheme
+```{r}
+reps <- tbl(trade_src, sql("select distinct reporter from tariffline")) %>%
+  collect()
+
+reps %>% 
+  mutate(reporter = as.integer(reporter)) %>% 
+  anti_join(getComtradeM49() %>% 
+              mutate(code = as.integer(code)),
+            by = c("reporter" = "code"))
+  
+```
+No such partners. So column with partners is standardized in Tariffline.
+
+### Partners not found in official scheme
+```{r}
+
+prts <- tbl(trade_src, sql("select distinct partner from tariffline")) %>%
+  collect()
+
+prts_not_official <- prts %>% 
+  mutate(partner = as.integer(partner)) %>% 
+  anti_join(getOfficialM49() %>% 
+              mutate(code = as.integer(code)),
+            by = c("partner" = "code")) %>% 
+  unlist() %>% unname() %>% sort()
+
+prts_not_official 
+```
+
+### Partners not found in Comtrade scheme
+```{r partners_not_comtrade}
+prts_not_comtrade <- prts %>% 
+  mutate(partner = as.integer(partner)) %>% 
+  anti_join(getComtradeM49() %>% 
+              mutate(code = as.integer(code)),
+            by = c("partner" = "code")) %>% 
+unlist() %>% unname() %>% sort()
+
+prts_not_comtrade 
+```
+
+Column with reporters is not standardized in Tariffline, but official M49 look better.
+
+### Partners not found in SWS
+
+```{r partners_not_sws}
+prts_not_sws <- getCountryName(prts$partner, drop = F) %>% 
+  filter(is.na(description)) %>% 
+  select(code) %>% 
+  arrange(code) %>% 
+  unlist() %>% unname()
+
+prts_not_sws
+```
+
+Wow! SWS is a champion!
+
+### Mysterious partners
+```{r mysterious_reporters}
+intersect(prts_not_comtrade, 
+          intersect(prts_not_sws, 
+                    prts_not_official))
+```
+
+## TODO
+
+* Check possible conflicts between similar codes from different sources
+* How big is data with mysterious partners?
