@@ -42,7 +42,7 @@ saveRDS(hs2_miss,
                   "tariffline_hs2_missing_quant.Rds"))
 
 
-## Full agri data for 2011
+## Full agri data 
 data_db %>% 
   collect() %>% 
 saveRDS(file.path(Sys.getenv("HOME"), 
