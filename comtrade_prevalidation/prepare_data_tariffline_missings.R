@@ -40,3 +40,12 @@ saveRDS(hs2_miss,
                   "trade_prevalid_testing",
                   "comtrade_prevalidation",
                   "tariffline_hs2_missing_quant.Rds"))
+
+
+## Full agri data for 2011
+data_db %>% 
+  collect() %>% 
+saveRDS(file.path(Sys.getenv("HOME"), 
+                  "r_adhoc", 
+                  "trade_prevalid_testing",
+                  "tariffline_agri_full.Rds"))
