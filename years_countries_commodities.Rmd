@@ -256,7 +256,5 @@ data %>%
   scale_numeric("x", domain = c(0, .05)) %>% 
   add_axis("y", title = "") %>% 
   set_options(height = 800, width = 500)
-  
-  
 ```
 
