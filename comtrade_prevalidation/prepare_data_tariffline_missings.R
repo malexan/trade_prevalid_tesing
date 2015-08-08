@@ -11,8 +11,8 @@ if(!is.element(hostname, c("matrunichstation", "sasmobile2.sasdomain")))
   stop("Uknown workstation. Aborting.")
 
 if(hostname == "matrunichstation") {
-  source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
   projects_dir <- "r_adhoc"
+  source(file.path(Sys.getenv("HOME"), projects_dir, "trade_prevalid_testing", "setupconnection.R"))
 }
 
 # At home
@@ -58,7 +58,7 @@ hs2_miss <- data %>%
 
 saveRDS(hs2_miss, 
         file.path(Sys.getenv("HOME"), 
-                  "r_adhoc", 
+                  projects_dir, 
                   "trade_prevalid_testing",
                   "comtrade_prevalidation",
                   "tariffline_hs2_missing_quant.Rds"))
@@ -71,3 +71,15 @@ saveRDS(file.path(Sys.getenv("HOME"),
                   projects_dir, 
                   "trade_prevalid_testing",
                   "tariffline_agri_full.Rds"))
+
+
+## Orange book dataset
+
+data_db %>%
+  filter(year == "2011",
+         hs2 %in% c('02', '10', '15')) %>% 
+  collect() %>% 
+  saveRDS(file.path(Sys.getenv("HOME"), 
+                    projects_dir, 
+                    "trade_prevalid_testing",
+                    "tariffline_agri_orange.Rds"))
