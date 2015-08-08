@@ -6,9 +6,59 @@ output: pdf_document
 ---
 
 ```{r set_options, echo = F}
+knitr::opts_chunk$set(list(echo = FALSE,
+                           eval = TRUE,
+                           cache = FALSE,
+                           warning = FALSE,
+                           message = FALSE,
+                           fig.height = 10,
+                           fig.width = 12))
+
+hostname <- Sys.getenv("HOSTNAME")
+if(!is.element(hostname, c("matrunichstation", "sasmobile2.sasdomain"))) 
+  stop("Uknown workstation. Aborting.")
+
+if(hostname == "sasmobile2.sasdomain") projects_dir <- "fao"
+
+subdir <- "OrangeBook"
+sourcedir <- "tradeR"
+
+if(length(lapply(dir(file.path(Sys.getenv("HOME"), projects_dir, "privateFAO", subdir, sourcedir), 
+                     full.names = T), 
+                 source)) == 0) stop("Files for sourcing not found")
+
+if(hostname == "sasmobile2.sasdomain") 
+  orange <- readRDS(file.path(Sys.getenv("HOME"), 
+                              projects_dir, 
+                              "trade_prevalid_testing",
+                              "tariffline_agri_orange.Rds"))
 
 ```
+
+# Validation of trade data
+
+At prevalidation step we are to make a decision should we accept data from a specific country for the further processing or not. A country could provide data of good quality for one part of commodities and inadequate level of quality for another part. We want to estimate quality differences between commodities of a country.
+
+Quality of data is estimated by following indicators:
+
+* Share per cent of missing quantities
+* Share per cent of unit value outliers
 
 
 ### Self-trade
 
+There are cases when a country reports itself as a partner to exports or imports. Such situations can occur due to mistakes or when an entrepôt exists.
+
+In case of the US 2011 there are no cases of self-trade.
+
+```{r examples_of_selftrade}
+orange %>% 
+  filter(reporter == partner)
+
+
+```
+
+
+## Detection of outliers
+
+## Imputing of missing quantities and replacement of outliers
