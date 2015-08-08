@@ -6,9 +6,11 @@ output: pdf_document
 ---
 
 ```{r set_options, echo = F}
+suppressPackageStartupMessages(library(dplyr))
+
 knitr::opts_chunk$set(list(echo = FALSE,
                            eval = TRUE,
-                           cache = FALSE,
+                           cache = TRUE,
                            warning = FALSE,
                            message = FALSE,
                            fig.height = 10,
@@ -32,6 +34,31 @@ if(hostname == "sasmobile2.sasdomain")
                               projects_dir, 
                               "trade_prevalid_testing",
                               "tariffline_agri_orange.Rds"))
+
+comtrade_areas <- getComtradeM49() %>% 
+  mutate(
+    common_name = countrycode::countrycode(name,
+                                           "country.name",
+                                           "country.name",
+                                           warn = T))
+official_areas <- getOfficialM49() %>% 
+  mutate(
+    common_name = countrycode::countrycode(name,
+                                           "country.name",
+                                           "country.name",
+                                           warn = T),
+    name_by_code = countrycode::countrycode(code,
+                                           "un",
+                                           "country.name",
+                                           warn = T),
+    name_by_iso3c = countrycode::countrycode(iso3,
+                                             "iso3c",
+                                             "country.name",
+                                             warn = T))
+
+official_areas %>% 
+  filter((common_name != name_by_code | common_name != name_by_iso3c | name_by_code != name_by_iso3c) |
+           (is.na(common_name) & is.na(name_by_code) & is.na(name_by_iso3c)))
 
 ```
 
