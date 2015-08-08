@@ -1,11 +1,20 @@
 suppressPackageStartupMessages(library(dplyr))
 
+# Where we are?
 
-# TODO: Check hostname in FAO!!!
-if(Sys.getenv("HOSTNAME") == "matrunichstation") {
+# In FAO
+
+hostname <- Sys.getenv("HOSTNAME")
+if(!is.element(hostname, c("matrunichstation", "sasmobile2.sasdomain"))) 
+  stop("Uknown workstation. Aborting.")
+
+if(hostname == "matrunichstation") {
   source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
   projects_dir <- "r_adhoc"
 }
+
+# At home
+if(hostname == "sasmobile2.sasdomain") projects_dir <- "fao"
 
 subdir <- "OrangeBook"
 sourcedir <- "tradeR"
