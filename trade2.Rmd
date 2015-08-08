@@ -1,0 +1,14 @@
+---
+title: "Trade2"
+author: "Aleksandr Matrunich"
+date: "August 8, 2015"
+output: pdf_document
+---
+
+```{r set_options, echo = F}
+
+```
+
+
+### Self-trade
+
