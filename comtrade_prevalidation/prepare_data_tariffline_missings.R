@@ -1,5 +1,7 @@
 suppressPackageStartupMessages(library(dplyr))
 
+missingIndicator <- function(indicator, missingCases) {
+  indicator %in% missingCases}
 # Where we are?
 
 # In FAO
@@ -23,14 +25,20 @@ if(length(lapply(dir(file.path(Sys.getenv("HOME"), projects_dir, "privateFAO", s
                      full.names = T), 
                  source)) == 0) stop("Files for sourcing not found")
 
-trade_src <- src_postgres("sws_data", "localhost", 5432, "trade", .pwd, 
-                          options = "-c search_path=ess")
+if(hostname == "matrunichstation") {
+  trade_src <- src_postgres("sws_data", "localhost", 5432, "trade", .pwd, 
+                            options = "-c search_path=ess")
+  
+  data_db <- tbl(trade_src, sql("select * from ess.agri"))
+}
 
-missingIndicator <- function(indicator, missingCases) {
-  indicator %in% missingCases}
+if(hostname == "sasmobile2.sasdomain") {
+  data_db <- readRDS(file.path(Sys.getenv("HOME"), 
+                               projects_dir, 
+                               "trade_prevalid_testing",
+                               "tariffline_agri_full.Rds"))
   
-  
-data_db <- tbl(trade_src, sql("select * from ess.agri"))
+}
 
   data <- data_db %>% 
   filter(year == "2011") %>% 
@@ -60,6 +68,6 @@ saveRDS(hs2_miss,
 data_db %>% 
   collect() %>% 
 saveRDS(file.path(Sys.getenv("HOME"), 
-                  "r_adhoc", 
+                  projects_dir, 
                   "trade_prevalid_testing",
                   "tariffline_agri_full.Rds"))
