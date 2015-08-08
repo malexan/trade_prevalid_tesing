@@ -14,3 +14,7 @@ vignettes/*.pdf
 
 # Shinyapps.io
 rsconnect/
+.Rproj.user
+
+# Big data files
+tariffline_agri_full.Rds
