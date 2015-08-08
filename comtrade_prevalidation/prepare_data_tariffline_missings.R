@@ -1,11 +1,16 @@
 suppressPackageStartupMessages(library(dplyr))
 
-source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
+
+# TODO: Check hostname in FAO!!!
+if(Sys.getenv("HOSTNAME") == "matrunichstation") {
+  source(file.path(Sys.getenv("HOME"), "r_adhoc", "trade_prevalid_testing", "setupconnection.R"))
+  projects_dir <- "r_adhoc"
+}
 
 subdir <- "OrangeBook"
 sourcedir <- "tradeR"
 
-if(length(lapply(dir(file.path(Sys.getenv("HOME"), "r_adhoc", "privateFAO", subdir, sourcedir), 
+if(length(lapply(dir(file.path(Sys.getenv("HOME"), projects_dir, "privateFAO", subdir, sourcedir), 
                      full.names = T), 
                  source)) == 0) stop("Files for sourcing not found")
 
