@@ -43,23 +43,15 @@ comtrade_areas <- getComtradeM49() %>%
                                            warn = T))
 official_areas <- getOfficialM49() %>% 
   mutate(
-    common_name = countrycode::countrycode(name,
-                                           "country.name",
-                                           "country.name",
-                                           warn = T),
-    name_by_code = countrycode::countrycode(code,
-                                           "un",
-                                           "country.name",
-                                           warn = T),
-    name_by_iso3c = countrycode::countrycode(iso3,
+    # We take iso3 as source because it provides the best cover (only 2 NA)
+    common_name = countrycode::countrycode(iso3,
                                              "iso3c",
                                              "country.name",
                                              warn = T))
 
-official_areas %>% 
-  filter((common_name != name_by_code | common_name != name_by_iso3c | name_by_code != name_by_iso3c) |
-           (is.na(common_name) & is.na(name_by_code) & is.na(name_by_iso3c)))
-
+orange %>% 
+  left_join(getOfficialM49(),
+            by= c("reporter" = "code"))
 ```
 
 # Validation of trade data
