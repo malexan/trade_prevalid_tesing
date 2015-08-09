@@ -114,7 +114,33 @@ missing_qty %>%
   scale_y_discrete("")
 ```
 
-
 ## Detection of outliers
+
+We define outliers as observations located outside the range:
+
+$$ [ Q_1 - k (Q_3 - Q_1 ) , Q_3 + k (Q_3 - Q_1 ) ] $$
+
+where $Q_1$ and $Q_3$ are the lower and upper quartiles respectively, and $k$ is a nonnegative constant. In this paper we use $k$ equals 1.5. 
+
+```{r prop_of_outliers_per_country, fig.width = 5, fig.height = 5, dpi = 300}
+out_coef <- 1.5
+
+orange %>% 
+  mutate(
+    qty_all = ifelse(!is.na(weight), weight, qty),
+    uv = value / qty_all) %>% 
+  select(-qty_all) %>% 
+  group_by(reporter_name, hs) %>% 
+  mutate(out_range = uv %in% boxplot.stats(uv, coef = out_coef, do.conf = F)) %>%
+  group_by(reporter_name) %>% 
+  summarize(prop_of_outs = sum(out_range) / n()) %>%
+  top_n(30, prop_of_outs) %>%
+  ggplot(aes(prop_of_outs, reorder(reporter_name, prop_of_outs))) +
+  geom_point() +
+  scale_x_continuous("Trade flows with unit value outliers",
+                     labels = scales::percent) +
+  scale_y_discrete("")
+```
+
 
 ## Imputing of missing quantities and replacement of outliers
