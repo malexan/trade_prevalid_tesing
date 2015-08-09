@@ -87,7 +87,7 @@ orange %>%
   printTab(caption = "Self-trade of commodities from 2nd, 10th and 15th HS chapters in 2011")
 ```
 
-## Missing indicators
+## Missing quantity
 
 We identify which reporters provide data of insufficient quality. Firstly for every reporter proportion of trade flows with missing quantity is calculated. 
 
@@ -171,7 +171,7 @@ orange %>%
 
 
 
-## Imputing of missing quantities and replacement of outliers
+# Imputing of missing quantities and replacement of outliers
 
 In data reported by USA for 2011 year in HS chapters 2, 10 and 15 there are `r 
 orange %>% 
