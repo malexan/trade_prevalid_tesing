@@ -49,9 +49,25 @@ official_areas <- getOfficialM49() %>%
                                              "country.name",
                                              warn = T))
 
-orange %>% 
-  left_join(getOfficialM49(),
-            by= c("reporter" = "code"))
+orange <- orange %>% 
+  left_join(getComtradeM49()  %>%
+              mutate(
+                reporter_name = countrycode::countrycode(name,
+                                                       "country.name",
+                                                       "country.name",
+                                                       warn = T)) %>% 
+              select(-name),
+            by= c("reporter" = "code")) %>% 
+  left_join(getOfficialM49() %>% 
+              select(-name) %>% 
+              mutate(
+                # We take iso3 as source because it provides the best cover (only 2 NA)
+                partner_name = countrycode::countrycode(iso3,
+                                                        "iso3c",
+                                                        "country.name",
+                                                        warn = T)) %>% 
+              select(-iso3),
+            by = c("partner" = "code"))
 ```
 
 # Validation of trade data
@@ -68,13 +84,19 @@ Quality of data is estimated by following indicators:
 
 There are cases when a country reports itself as a partner to exports or imports. Such situations can occur due to mistakes or when an entrepôt exists.
 
-In case of the US 2011 there are no cases of self-trade.
-
 ```{r examples_of_selftrade}
 orange %>% 
-  filter(reporter == partner)
-
-
+  filter(reporter_name == partner_name) %>% 
+  group_by(reporter_name, flow) %>% 
+  summarize(ntradeflows = n()) %>% 
+  ungroup() %>% 
+  arrange(desc(ntradeflows)) %>% 
+  mutate(flow = factor(flow, levels = c(1, 2), 
+                       labels = c("Import", "Export"))) %>% 
+  rename(Reporter = reporter_name, 
+         Flow = flow, 
+         Total = ntradeflows) %>% 
+  printTab(caption = "Self-trade of commodities from 2nd, 10th and 15th HS chapters in 2011")
 ```
 
 
