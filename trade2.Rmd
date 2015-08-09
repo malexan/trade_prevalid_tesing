@@ -42,7 +42,7 @@ orange <- orange %>%
                 reporter_name = countrycode::countrycode(name,
                                                        "country.name",
                                                        "country.name",
-                                                       warn = T)) %>% 
+                                                       warn = F)) %>% 
               select(-name),
             by= c("reporter" = "code")) %>% 
   left_join(getOfficialM49() %>% 
@@ -52,7 +52,7 @@ orange <- orange %>%
                 partner_name = countrycode::countrycode(iso3,
                                                         "iso3c",
                                                         "country.name",
-                                                        warn = T)) %>% 
+                                                        warn = F)) %>% 
               select(-iso3),
             by = c("partner" = "code")) %>% 
   mutate(flow = factor(flow, levels = c(1, 2, 3, 4), 
@@ -200,6 +200,8 @@ out_tab %>%
 
 ```
 
+## Imputing using reporter median unit values
+
 Now we correct weight of this outlied trade flows with help of median reporter unit value for a given commodity.
 
 ```{r outlier_corrections}
@@ -209,4 +211,6 @@ out_tab %>%
   select(-Value, -UV, -UV_me) %>% 
   printTab(caption = "Example trade flows with corrected weight")
 ```
+
+## Imputing using data from trade partner (mirroring)
 
