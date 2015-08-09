@@ -7,6 +7,7 @@ output: pdf_document
 
 ```{r set_options, echo = F}
 suppressPackageStartupMessages(library(dplyr))
+library(ggvis)
 
 knitr::opts_chunk$set(list(echo = FALSE,
                            eval = TRUE,
@@ -70,7 +71,7 @@ orange <- orange %>%
             by = c("partner" = "code"))
 ```
 
-# Validation of trade data
+# Initial validation of trade data
 
 At prevalidation step we are to make a decision should we accept data from a specific country for the further processing or not. A country could provide data of good quality for one part of commodities and inadequate level of quality for another part. We want to estimate quality differences between commodities of a country.
 
@@ -80,7 +81,7 @@ Quality of data is estimated by following indicators:
 * Share per cent of unit value outliers
 
 
-### Self-trade
+## Self-trade
 
 There are cases when a country reports itself as a partner to exports or imports. Such situations can occur due to mistakes or when an entrepôt exists.
 
@@ -97,6 +98,34 @@ orange %>%
          Flow = flow, 
          Total = ntradeflows) %>% 
   printTab(caption = "Self-trade of commodities from 2nd, 10th and 15th HS chapters in 2011")
+```
+
+## Missing indicators
+
+We identify which reporters provide data of insufficient quality. Firstly for every reporter proportion of trade flows with missing quantity is calculated. 
+
+```{r}
+no_quant_threshold <- .02
+
+orange <- orange %>% 
+  mutate(no_quant = missingIndicator(weight, NA) &
+           missingIndicator(qty, NA))  
+
+missing_qty <- orange %>% 
+  group_by(reporter_name) %>% 
+  summarize(missing_prop = sum(no_quant) / n()) %>% 
+  ungroup() %>% 
+  filter(missing_prop > no_quant_threshold) %>% 
+  arrange(desc(missing_prop))
+
+missing_qty %>% 
+  ggvis(x = ~missing_prop,
+        y = ~reporter_name) %>% 
+  layer_points() %>% 
+    add_axis("x", 
+             title = "Trade flows with missing quantity (HS 02, 10, 15)",
+             format = "%") %>% 
+  add_axis("y", title = "") 
 ```
 
 
