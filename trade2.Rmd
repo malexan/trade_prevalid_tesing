@@ -5,7 +5,7 @@ date: "August 8, 2015"
 output: pdf_document
 ---
 
-```{r set_options, echo = F}
+```{r set_options, echo = F, warning = F}
 suppressPackageStartupMessages(library(dplyr))
 library(ggvis)
 
@@ -35,20 +35,6 @@ if(hostname == "sasmobile2.sasdomain")
                               projects_dir, 
                               "trade_prevalid_testing",
                               "tariffline_agri_orange.Rds"))
-
-comtrade_areas <- getComtradeM49() %>% 
-  mutate(
-    common_name = countrycode::countrycode(name,
-                                           "country.name",
-                                           "country.name",
-                                           warn = T))
-official_areas <- getOfficialM49() %>% 
-  mutate(
-    # We take iso3 as source because it provides the best cover (only 2 NA)
-    common_name = countrycode::countrycode(iso3,
-                                             "iso3c",
-                                             "country.name",
-                                             warn = T))
 
 orange <- orange %>% 
   left_join(getComtradeM49()  %>%
@@ -104,7 +90,7 @@ orange %>%
 
 We identify which reporters provide data of insufficient quality. Firstly for every reporter proportion of trade flows with missing quantity is calculated. 
 
-```{r}
+```{r missing_quantity_props_per_country, cache = F}
 no_quant_threshold <- .02
 
 orange <- orange %>% 
@@ -118,14 +104,14 @@ missing_qty <- orange %>%
   filter(missing_prop > no_quant_threshold) %>% 
   arrange(desc(missing_prop))
 
-missing_qty %>% 
-  ggvis(x = ~missing_prop,
-        y = ~reporter_name) %>% 
-  layer_points() %>% 
-    add_axis("x", 
-             title = "Trade flows with missing quantity (HS 02, 10, 15)",
-             format = "%") %>% 
-  add_axis("y", title = "") 
+# missing_qty %>% 
+#   ggvis(x = ~missing_prop,
+#         y = ~reporter_name) %>% 
+#   layer_points() %>% 
+#     add_axis("x", 
+#              title = "Trade flows with missing quantity (HS 02, 10, 15)",
+#              format = "%") %>% 
+#   add_axis("y", title = "") 
 ```
 
 
