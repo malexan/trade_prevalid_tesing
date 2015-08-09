@@ -57,7 +57,7 @@ orange <- orange %>%
             by = c("partner" = "code")) %>% 
   mutate(flow = factor(flow, levels = c(1, 2, 3, 4), 
                        labels = c("Import", "Export",
-                                  "Re-Import", "Re-Export")))  
+                                  "Re-Import", "Re-Export")))
 ```
 
 # Initial validation of trade data
@@ -132,7 +132,9 @@ orange <- orange %>%
     uv = value / qty_all) %>% 
   select(-qty_all) %>% 
   group_by(reporter_name, hs) %>% 
-  mutate(out_range = uv %in% boxplot.stats(uv, coef = out_coef, do.conf = F)) %>% 
+  mutate(
+    uv_reporter = median(uv, na.rm = T),
+    out_range = uv %in% boxplot.stats(uv, coef = out_coef, do.conf = F)) %>% 
   ungroup()
 
 orange %>%
@@ -180,17 +182,31 @@ orange %>%
   nrow` trade flows with UV-outliers.
   
 ```{r us_outliers_example}
-orange %>% 
-  filter(reporter_name == "United States" & out_range) %>% 
+out_tab <- orange %>% 
+  filter(reporter_name == "United States" & out_range & !is.na(partner_name)) %>% 
   select(Reporter = reporter_name, 
          Partner  = partner_name,
          Flow     = flow,
+         Commodity = hs,
          Weight   = weight,
          Value    = value,
-         UV       = uv) %>% 
-  sample_n(7) %>% 
+         UV       = uv,
+         UV_me    = uv_reporter) %>% 
+  sample_n(10) %>% 
+    mutate_each(funs(rnd = round(., 2)), 
+              starts_with("UV")) 
+out_tab %>% 
   printTab(caption = "Example trade flows with outlied unit values")
 
 ```
 
+Now we correct weight of this outlied trade flows with help of median reporter unit value for a given commodity.
+
+```{r outlier_corrections}
+out_tab %>% 
+  mutate(Weight_corr = round(Value / UV_me, 0),
+         Weight_diff = Weight - Weight_corr) %>%
+  select(-Value, -UV, -UV_me) %>% 
+  printTab(caption = "Example trade flows with corrected weight")
+```
 
