@@ -54,7 +54,10 @@ orange <- orange %>%
                                                         "country.name",
                                                         warn = T)) %>% 
               select(-iso3),
-            by = c("partner" = "code"))
+            by = c("partner" = "code")) %>% 
+  mutate(flow = factor(flow, levels = c(1, 2, 3, 4), 
+                       labels = c("Import", "Export",
+                                  "Re-Import", "Re-Export")))  
 ```
 
 # Initial validation of trade data
@@ -78,8 +81,6 @@ orange %>%
   summarize(ntradeflows = n()) %>% 
   ungroup() %>% 
   arrange(desc(ntradeflows)) %>% 
-  mutate(flow = factor(flow, levels = c(1, 2), 
-                       labels = c("Import", "Export"))) %>% 
   rename(Reporter = reporter_name, 
          Flow = flow, 
          Total = ntradeflows) %>% 
@@ -125,13 +126,16 @@ where $Q_1$ and $Q_3$ are the lower and upper quartiles respectively, and $k$ is
 ```{r prop_of_outliers_per_country, fig.width = 5, fig.height = 5, dpi = 300}
 out_coef <- 1.5
 
-orange %>% 
+orange <- orange %>% 
   mutate(
     qty_all = ifelse(!is.na(weight), weight, qty),
     uv = value / qty_all) %>% 
   select(-qty_all) %>% 
   group_by(reporter_name, hs) %>% 
-  mutate(out_range = uv %in% boxplot.stats(uv, coef = out_coef, do.conf = F)) %>%
+  mutate(out_range = uv %in% boxplot.stats(uv, coef = out_coef, do.conf = F)) %>% 
+  ungroup()
+
+orange %>%
   group_by(reporter_name) %>% 
   summarize(prop_of_outs = sum(out_range) / n()) %>%
   top_n(30, prop_of_outs) %>%
@@ -142,5 +146,51 @@ orange %>%
   scale_y_discrete("")
 ```
 
+## Missing quantites and outliers combined
+
+```{r missings_outliers_together}
+orange %>% 
+  group_by(reporter_name) %>% 
+  summarize(prop_of_miss = sum(no_quant) / n(),
+            prop_of_outs = sum(out_range) / n()) %>% 
+  filter(prop_of_miss > .001 & prop_of_outs > .001) %>% 
+  ggplot(aes(x = prop_of_miss, 
+             y = prop_of_outs,
+             label = reporter_name)) +
+  geom_text(size = 5) + 
+  scale_x_log10(
+    "Trade flows with missing quantity. Log10 scale",
+    breaks = c(.002, .01, .1, .5, 1),
+    labels = scales::percent) +
+  scale_y_continuous(
+    "Trade flows with UV-outliers",
+    labels = scales::percent)
+```
+
+
 
 ## Imputing of missing quantities and replacement of outliers
+
+In data reported by USA for 2011 year in HS chapters 2, 10 and 15 there are `r 
+orange %>% 
+  filter(reporter_name == "United States" & no_quant) %>% 
+  nrow` trade flows with missing quantity and `r 
+orange %>% 
+  filter(reporter_name == "United States" & out_range) %>% 
+  nrow` trade flows with UV-outliers.
+  
+```{r us_outliers_example}
+orange %>% 
+  filter(reporter_name == "United States" & out_range) %>% 
+  select(Reporter = reporter_name, 
+         Partner  = partner_name,
+         Flow     = flow,
+         Weight   = weight,
+         Value    = value,
+         UV       = uv) %>% 
+  sample_n(7) %>% 
+  printTab(caption = "Example trade flows with outlied unit values")
+
+```
+
+
