@@ -121,7 +121,7 @@ We define outliers as observations located outside the range:
 
 $$ [ Q_1 - k (Q_3 - Q_1 ) , Q_3 + k (Q_3 - Q_1 ) ] $$
 
-where $Q_1$ and $Q_3$ are the lower and upper quartiles respectively, and $k$ is a nonnegative constant. In this paper we use $k$ equals 1.5. 
+where $Q_1$ and $Q_3$ are the lower and upper quartiles respectively, and $k$ is a non negative constant. In this paper we use $k$ equals 1.5. 
 
 ```{r prop_of_outliers_per_country, fig.width = 5, fig.height = 5, dpi = 300}
 out_coef <- 1.5
