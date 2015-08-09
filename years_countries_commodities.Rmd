@@ -65,14 +65,6 @@ On output:
 
 Vector of logical values (is it missing or not)
 
-```{r missing_indicator_f}
-missingIndicator <- function(indicator, missingCases) {
-  indicator %in% missingCases
-}
-```
-
-
-
 #### Unit value outlier
 
 We suggest to use median reporter unit value.
