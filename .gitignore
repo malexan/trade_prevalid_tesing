@@ -21,4 +21,6 @@ rsconnect/
 tariffline_agri_full.Rds
 tariffline_agri_orange.Rds
 
+# Knitr stuff
 /*_cache
+/*_files

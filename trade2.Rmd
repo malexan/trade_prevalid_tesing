@@ -90,7 +90,7 @@ orange %>%
 
 We identify which reporters provide data of insufficient quality. Firstly for every reporter proportion of trade flows with missing quantity is calculated. 
 
-```{r missing_quantity_props_per_country, cache = F}
+```{r missing_quantity_props_per_country, cache = F, fig.width = 5, fig.height = 5, dpi = 200}
 no_quant_threshold <- .02
 
 orange <- orange %>% 
@@ -105,9 +105,11 @@ missing_qty <- orange %>%
   arrange(desc(missing_prop))
 
 missing_qty %>% 
+  mutate(reporter_name = stringr::str_replace(
+    reporter_name, ",.*$", "...")) %>% 
   ggplot(aes(missing_prop, reorder(reporter_name, missing_prop))) +
   geom_point() +
-  scale_x_continuous("Proportion of trade flows with missing quantities",
+  scale_x_continuous("Trade flows with missing quantities",
                      labels = scales::percent) +
   scale_y_discrete("")
 ```
