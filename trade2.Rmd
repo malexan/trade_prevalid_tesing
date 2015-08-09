@@ -7,7 +7,7 @@ output: pdf_document
 
 ```{r set_options, echo = F, warning = F}
 suppressPackageStartupMessages(library(dplyr))
-library(ggvis)
+library(ggplot2)
 
 knitr::opts_chunk$set(list(echo = FALSE,
                            eval = TRUE,
@@ -104,14 +104,12 @@ missing_qty <- orange %>%
   filter(missing_prop > no_quant_threshold) %>% 
   arrange(desc(missing_prop))
 
-# missing_qty %>% 
-#   ggvis(x = ~missing_prop,
-#         y = ~reporter_name) %>% 
-#   layer_points() %>% 
-#     add_axis("x", 
-#              title = "Trade flows with missing quantity (HS 02, 10, 15)",
-#              format = "%") %>% 
-#   add_axis("y", title = "") 
+missing_qty %>% 
+  ggplot(aes(missing_prop, reorder(reporter_name, missing_prop))) +
+  geom_point() +
+  scale_x_continuous("Proportion of trade flows with missing quantities",
+                     labels = scales::percent) +
+  scale_y_discrete("")
 ```
 
 
